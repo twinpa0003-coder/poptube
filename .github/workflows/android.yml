@@ -40,7 +40,26 @@ jobs:
           path: poptube.apk
           if-no-files-found: error
 
-      - name: Attach to release
+      # 폰에서 바로 받을 수 있는 고정 주소를 만든다.
+      #   https://github.com/<owner>/<repo>/releases/latest/download/poptube.apk
+      # 아티팩트와 달리 로그인이 필요 없고 zip 이 아니라 APK 그대로 내려받아진다.
+      - name: Update rolling release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: 최신 빌드
+          body: |
+            `main` 브랜치 최신 커밋 자동 빌드입니다.
+
+            - 커밋: ${{ github.sha }}
+            - 빌드: ${{ github.run_number }}회차
+
+            아래 `poptube.apk` 를 폰에서 받아 설치하세요.
+          files: poptube.apk
+          make_latest: true
+
+      - name: Attach to version release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
