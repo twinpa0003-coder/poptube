@@ -7,6 +7,10 @@ android/.idea/
 *.iml
 *.apk
 *.keystore
+# 서명키는 절대 커밋하지 않는다. GitHub Actions 시크릿에 들어 있고, 로컬 사본은 백업용이다.
+keystore/
+*.p12
+*.jks
 
 # Web
 web/node_modules/

@@ -100,7 +100,25 @@ cd D:/Project/ytpop/web && npm install && npx vercel --prod
 
 ---
 
-## 6. 알아둘 것
+## 6. 서명키 (중요)
+
+APK 는 고정 키스토어로 서명한다. **이게 바뀌면 기존 앱 위에 업데이트를 설치할 수 없다**
+("앱이 설치되지 않음" — 안드로이드가 서명이 다른 APK 의 덮어쓰기를 막는다).
+
+- 키스토어는 GitHub Actions 시크릿 `SIGNING_KEYSTORE_B64` 에 base64 로 들어 있다
+- 로컬 백업: `keystore/poptube.p12` (`.gitignore` 처리됨, 리포에 올라가지 않는다)
+- 비밀번호/별칭 모두 `poptube`
+- 인증서 지문(SHA256): `40:9A:C3:1F:0B:74:6F:26:E9:CF:93:1E:96:C2:83:56:35:06:39:71:05:FF:23:BD:70:17:6F:F9:47:04:AA:E4`
+
+**이 파일을 잃어버리면** 새 키로 서명해야 하고, 폰에서 앱을 삭제 후 재설치해야 한다
+(로그인 상태와 앱 데이터가 전부 날아간다). `keystore/poptube.p12` 를 개인 저장소에 백업해 둘 것.
+
+시크릿을 다시 등록해야 하면 GitHub 리포 → Settings → Secrets and variables → Actions 에서
+`SIGNING_KEYSTORE_B64` 를 `keystore/poptube.p12.b64` 의 내용으로 갱신하면 된다.
+
+---
+
+## 7. 알아둘 것
 
 - Google Play 배포용이 아니다. 개인 사이드로드 전용.
 - 광고 차단은 YouTube 이용약관에 어긋날 수 있으며, 계정 제재 가능성은 사용자가 감수한다.

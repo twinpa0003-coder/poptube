@@ -27,9 +27,25 @@ jobs:
         with:
           gradle-version: '8.11'
 
+      # 고정 서명키. 이게 없으면 매 빌드마다 서명이 달라져서 기존 앱 위에 설치가 안 된다.
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::SIGNING_KEYSTORE_B64 시크릿이 없습니다. 서명이 매번 달라져 업데이트 설치가 실패합니다."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > android/app/poptube.p12
+          echo "키스토어 복원 완료 ($(stat -c%s android/app/poptube.p12) bytes)"
+
       - name: Build debug APK
         working-directory: android
         run: gradle --no-daemon assembleDebug
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f android/app/poptube.p12
 
       - name: Rename APK
         run: cp android/app/build/outputs/apk/debug/app-debug.apk poptube.apk
