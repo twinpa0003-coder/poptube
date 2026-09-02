@@ -77,11 +77,16 @@ D:\Project\ytpop\
 - FAB **롱프레스로 모바일/데스크톱 UA 토글** 후 새로고침
 
 **FR-2. 로그인 유지**
+- UA 문자열만 바꾸면 구글 로그인이 막힌다. 구글은 Client Hints(`Sec-CH-UA`)도 검사하므로
+  `WebSettingsCompat.setUserAgentMetadata()` 로 브랜드/플랫폼까지 UA 와 일관되게 맞출 것
 - `CookieManager.setAcceptCookie(true)`, `setAcceptThirdPartyCookies(webView, true)`
 - 앱 일시정지/종료 시 `CookieManager.flush()` — 재실행 시 로그인 유지
 - `WebSettings.domStorageEnabled=true`, `databaseEnabled=true`
 
 **FR-3. 화면 꺼짐/백그라운드 오디오 재생**
+- **WebView 를 상속해 `onWindowVisibilityChanged(GONE)` 을 삼킬 것.** 화면이 꺼지면 안드로이드가
+  이 콜백을 보내고 Chromium 이 네이티브 레벨에서 미디어를 정지시킨다. JS 의 가시성 스푸핑보다
+  아래층이라 그것만으로는 절대 막히지 않는다. **이 처리가 없으면 앱의 존재 이유가 사라진다.**
 - `onStop()`에서 **절대** `webView.onPause()` / `pauseTimers()` 호출 금지
 - `androidx.webkit`의 `addDocumentStartJavaScript`로 **모든 스크립트보다 먼저** 주입:
   - `document.hidden = false`, `document.visibilityState = 'visible'` 프로퍼티 재정의

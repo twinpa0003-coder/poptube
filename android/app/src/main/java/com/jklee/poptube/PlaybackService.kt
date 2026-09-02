@@ -18,6 +18,9 @@ import androidx.core.app.NotificationManagerCompat
  */
 class PlaybackService : Service() {
 
+    /** 재생 중에만 잡는다. 화면이 꺼진 뒤 CPU 가 잠들어 오디오가 끊기는 걸 막는다. */
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -33,7 +36,21 @@ class PlaybackService : Service() {
         val playing = intent?.getBooleanExtra(EXTRA_PLAYING, true) ?: true
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: getString(R.string.notif_title)
         startForegroundCompat(buildNotification(title, playing))
+        updateWakeLock(playing)
         return START_NOT_STICKY
+    }
+
+    private fun updateWakeLock(playing: Boolean) {
+        if (playing) {
+            if (wakeLock == null) {
+                val pm = getSystemService(android.os.PowerManager::class.java)
+                wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "PopTube:playback")
+                    .apply { setReferenceCounted(false) }
+            }
+            if (wakeLock?.isHeld != true) wakeLock?.acquire(6 * 60 * 60 * 1000L)
+        } else {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        }
     }
 
     private fun startForegroundCompat(notification: android.app.Notification) {
@@ -82,6 +99,7 @@ class PlaybackService : Service() {
         )
 
     override fun onDestroy() {
+        updateWakeLock(false)
         NotificationManagerCompat.from(this).cancel(NOTIF_ID)
         super.onDestroy()
     }

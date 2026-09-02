@@ -32,6 +32,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.UserAgentMetadata
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.jklee.poptube.databinding.ActivityMainBinding
@@ -40,7 +42,7 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var webView: WebView
+    private lateinit var webView: BackgroundWebView
 
     private var isPlaying = false
     private var currentTitle = "YouTube"
@@ -131,11 +133,62 @@ class MainActivity : AppCompatActivity() {
             setAcceptThirdPartyCookies(webView, true)   // 구글 로그인에 필요
         }
 
+        applyDesktopClientHints(this)
+
         webView.isVerticalScrollBarEnabled = true
         webView.webViewClient = webClient
         webView.webChromeClient = webChrome
         webView.addJavascriptInterface(PlaybackBridge(), "PopTubeNative")
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+    }
+
+    /**
+     * UA 문자열만 데스크톱으로 바꾸면 구글 로그인이 막힌다.
+     * 구글은 Client Hints(Sec-CH-UA) 헤더도 보는데, WebView 는 여기에 자신이 WebView 임을
+     * 그대로 실어 보내기 때문이다. 브랜드/플랫폼까지 UA 와 일관되게 맞춰준다.
+     *
+     * 구글이 임베디드 브라우저 로그인을 막는 건 피싱 방지 목적이라 언제든 다시 막힐 수 있다.
+     * 실패하면 FAB 롱프레스로 모바일 모드에서 로그인해 보고, 그래도 안 되면 비로그인으로 쓴다.
+     */
+    private fun applyDesktopClientHints(settings: WebSettings) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
+
+        val desktop = prefs.getBoolean(KEY_DESKTOP, true)
+        if (!desktop) {
+            // 모바일 모드로 돌아갈 때는 위장을 걷어내야 한다. 남아 있으면 UA 와 어긋나서
+            // 오히려 더 눈에 띈다.
+            runCatching {
+                WebSettingsCompat.setUserAgentMetadata(settings, UserAgentMetadata.Builder().build())
+            }
+            return
+        }
+
+        runCatching {
+            fun brand(name: String, major: String) = UserAgentMetadata.BrandVersion.Builder()
+                .setBrand(name)
+                .setMajorVersion(major)
+                .setFullVersion("$major.0.0.0")
+                .build()
+
+            val metadata = UserAgentMetadata.Builder()
+                .setBrandVersionList(
+                    listOf(
+                        brand("Chromium", CHROME_MAJOR),
+                        brand("Google Chrome", CHROME_MAJOR),
+                        brand("Not.A/Brand", "24")
+                    )
+                )
+                .setFullVersion("$CHROME_MAJOR.0.0.0")
+                .setPlatform("Windows")
+                .setPlatformVersion("15.0.0")
+                .setArchitecture("x86")
+                .setBitness(64)
+                .setModel("")
+                .setMobile(false)
+                .setWow64(false)
+                .build()
+            WebSettingsCompat.setUserAgentMetadata(settings, metadata)
+        }
     }
 
     /**
@@ -185,6 +238,13 @@ class MainActivity : AppCompatActivity() {
             super.onPageFinished(view, url)
             runJs(JsInjection.bootstrap(RulesRepository.current.skipSelectors))
             CookieManager.getInstance().flush()
+
+            // JS 브리지가 어떤 이유로든 동작하지 않아도 프로세스가 살아남도록,
+            // 영상 페이지에 들어온 시점에 네이티브 쪽에서 포그라운드 서비스를 띄운다.
+            // (백그라운드에서는 서비스 시작이 제한되므로 반드시 화면이 켜져 있을 때 시작해야 한다)
+            if (url != null && (url.contains("/watch") || url.contains("youtu.be/"))) {
+                PlaybackService.update(this@MainActivity, isPlaying, currentTitle)
+            }
         }
     }
 
@@ -327,6 +387,7 @@ class MainActivity : AppCompatActivity() {
         PlaybackBus.listener = null
         runCatching { unregisterReceiver(pipReceiver) }
         PlaybackService.stop(this)
+        webView.keepPlayingInBackground = false   // 이제는 정상적으로 정리되어야 한다
         webView.removeJavascriptInterface("PopTubeNative")
         webView.destroy()
         super.onDestroy()
@@ -358,6 +419,7 @@ class MainActivity : AppCompatActivity() {
         val next = !prefs.getBoolean(KEY_DESKTOP, true)
         prefs.edit().putBoolean(KEY_DESKTOP, next).apply()
         webView.settings.userAgentString = if (next) DESKTOP_UA else null
+        applyDesktopClientHints(webView.settings)
         Toast.makeText(this, if (next) R.string.ua_desktop_on else R.string.ua_desktop_off, Toast.LENGTH_SHORT).show()
         webView.reload()
     }
@@ -400,10 +462,16 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_DESKTOP = "desktop_mode"
         private const val ACTION_PIP_TOGGLE = "com.jklee.poptube.PIP_TOGGLE"
 
-        /** 삼성 인터넷 "데스크톱 버전"과 같은 효과를 내는 UA. 구글 로그인 우회에도 이게 유리하다. */
+        private const val CHROME_MAJOR = "125"
+
+        /**
+         * 삼성 인터넷 "데스크톱 버전"과 같은 효과를 내는 UA.
+         * [applyDesktopClientHints] 의 platform("Windows") 과 반드시 일관되어야 한다.
+         * 둘이 어긋나면 구글이 위장을 바로 잡아낸다.
+         */
         private const val DESKTOP_UA =
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/125.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/$CHROME_MAJOR.0.0.0 Safari/537.36"
 
         private val INTERNAL_HOSTS = listOf(
             "youtube.com", "youtu.be", "youtube-nocookie.com", "ytimg.com", "ggpht.com",
