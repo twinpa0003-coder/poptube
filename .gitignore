@@ -1,0 +1,22 @@
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+*.apk
+*.keystore
+
+# Web
+web/node_modules/
+web/.next/
+web/out/
+web/.vercel/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+
+# 토큰이 들어가는 파일은 절대 커밋하지 않는다
+.env
+.env.local
+.env*.local

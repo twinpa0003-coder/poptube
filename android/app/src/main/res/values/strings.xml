@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PopTube</string>
+    <string name="fab_pip">떠 있는 창으로 보기</string>
+    <string name="channel_playback">재생 중</string>
+    <string name="notif_title">PopTube 재생 중</string>
+    <string name="notif_text">화면을 꺼도 소리는 계속 재생됩니다</string>
+    <string name="action_play">재생</string>
+    <string name="action_pause">일시정지</string>
+    <string name="action_stop">종료</string>
+    <string name="ua_desktop_on">데스크톱 모드로 전환합니다</string>
+    <string name="ua_desktop_off">모바일 모드로 전환합니다</string>
+    <string name="pip_unavailable">이 기기에서는 떠 있는 창을 쓸 수 없습니다</string>
+    <string name="battery_hint">설정 &gt; 배터리에서 PopTube를 \"제한 없음\"으로 두면 백그라운드 재생이 안정적입니다</string>
+</resources>
