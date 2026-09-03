@@ -380,7 +380,7 @@ class MainActivity : AppCompatActivity() {
         if (!pipAllowedByUser()) {
             if (!silent) {
                 Toast.makeText(this, R.string.pip_permission_needed, Toast.LENGTH_LONG).show()
-                runCatching { startActivity(Intent(Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS)) }
+                openPipSettings()
             }
             return
         }
@@ -394,6 +394,24 @@ class MainActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG
                 ).show()
             }
+        }
+    }
+
+    /**
+     * PiP 허용 설정 화면을 연다.
+     * 전용 액션은 공개 SDK 상수가 아니라서 문자열로 쓰고, 없는 기기를 대비해
+     * 앱 정보 화면으로 폴백한다.
+     */
+    private fun openPipSettings() {
+        val candidates = listOf(
+            Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS"),
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", packageName, null)
+            )
+        )
+        for (intent in candidates) {
+            if (runCatching { startActivity(intent) }.isSuccess) return
         }
     }
 
