@@ -17,6 +17,8 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.KeyEvent
 import android.util.Rational
 import android.view.View
 import android.webkit.CookieManager
@@ -54,6 +56,9 @@ class MainActivity : AppCompatActivity() {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var jsInjectionWarned = false
 
+    /** PiP 를 위해 우리가 전체화면을 켰는지. PiP 를 나갈 때 되돌리려고 기억해 둔다. */
+    private var fullscreenForPip = false
+
     private val prefs by lazy { getSharedPreferences("poptube", Context.MODE_PRIVATE) }
 
     private val notificationPermission =
@@ -79,7 +84,7 @@ class MainActivity : AppCompatActivity() {
         configureWebView()
         installDocumentStartScript()
 
-        binding.fabPip.setOnClickListener { enterPip() }
+        binding.fabPip.setOnClickListener { enterPipSmart() }
         binding.fabPip.setOnLongClickListener { toggleDesktopMode(); true }
 
         registerPipReceiver()
@@ -419,14 +424,66 @@ class MainActivity : AppCompatActivity() {
         super.onUserLeaveHint()
         // Android 12+ 는 autoEnter 로도 들어가지만, 그 플래그가 제때 갱신되지 않았을 수 있으므로
         // 버전 구분 없이 항상 시도한다. 이미 PiP 라면 아무 일도 일어나지 않는다.
-        if (customView == null && isProbablyPlaying()) enterPip(silent = true)
+        //
+        // 전체화면 상태(customView != null)를 제외하면 안 된다. 오히려 그때가 PiP 화질이
+        // 가장 좋다 — 영상 뷰가 창을 그대로 채운다.
+        if (isProbablyPlaying()) enterPip(silent = true)
     }
 
     override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPip, newConfig)
         binding.fabPip.visibility = if (isInPip) View.GONE else View.VISIBLE
-        // PiP 창은 작아서 페이지 전체가 축소돼 보이면 쓸모가 없다. 영상만 꽉 채운다.
+
+        // 데스크톱 UA 는 레이아웃 폭을 1024px 이상으로 잡는다. PiP 창은 300px 남짓이라
+        // WebView 가 축소하지 않고 왼쪽 위만 잘라서 보여준다.
+        // PiP 동안에는 wide viewport 를 꺼서 레이아웃 폭을 창 크기에 맞춘다.
+        webView.settings.useWideViewPort = !isInPip
         runJs("window.__poptubePip && window.__poptubePip($isInPip)")
+
+        if (!isInPip && fullscreenForPip) {
+            // PiP 때문에 우리가 켠 전체화면이면 되돌린다.
+            fullscreenForPip = false
+            if (customView != null) webChrome.onHideCustomView()
+        }
+    }
+
+    /**
+     * PiP 로 들어가기 전에 플레이어를 전체화면으로 만든다.
+     *
+     * 전체화면이면 [WebChromeClient.onShowCustomView] 로 영상 뷰가 액티비티를 꽉 채우고,
+     * 그 상태로 PiP 에 들어가면 창 크기에 맞게 정확히 렌더링된다. 페이지를 축소해서
+     * 보여주는 것과는 결과물이 완전히 다르다.
+     *
+     * JS 의 requestFullscreen 은 사용자 제스처를 요구해서 네이티브에서 호출하면 막힌다.
+     * 대신 유튜브 플레이어의 단축키 'f' 를 실제 키 이벤트로 보낸다. 키 이벤트는 정상적인
+     * 입력 경로를 타므로 Chromium 이 사용자 조작으로 인정한다.
+     */
+    private fun requestPageFullscreen() {
+        runJs(
+            """
+            (function(){
+              var p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+              if (p) { try { p.focus(); } catch(e) {} }
+            })();
+            """.trimIndent()
+        )
+        val now = SystemClock.uptimeMillis()
+        runCatching {
+            webView.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F, 0))
+            webView.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F, 0))
+        }
+    }
+
+    /** 전체화면을 먼저 시도한 뒤 PiP 로 들어간다. 실패해도 CSS 폴백으로 진입은 한다. */
+    private fun enterPipSmart() {
+        val onWatchPage = webView.url?.let { it.contains("/watch") || it.contains("youtu.be/") } == true
+        if (customView == null && onWatchPage) {
+            fullscreenForPip = true
+            requestPageFullscreen()
+            webView.postDelayed({ enterPip() }, 600)
+        } else {
+            enterPip()
+        }
     }
 
     // ------------------------------------------------------------- lifecycle
