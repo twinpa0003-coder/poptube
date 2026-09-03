@@ -11,5 +11,8 @@
     <string name="ua_desktop_on">데스크톱 모드로 전환합니다</string>
     <string name="ua_desktop_off">모바일 모드로 전환합니다</string>
     <string name="pip_unavailable">이 기기에서는 떠 있는 창을 쓸 수 없습니다</string>
+    <string name="pip_permission_needed">떠 있는 창 권한이 꺼져 있습니다. 설정에서 PopTube를 켜주세요.</string>
+    <string name="pip_failed">떠 있는 창 진입에 실패했습니다: %1$s</string>
+    <string name="js_injection_failed">스크립트 주입 실패 — 광고 스킵과 떠 있는 창 최적화가 동작하지 않습니다</string>
     <string name="battery_hint">설정 &gt; 배터리에서 PopTube를 \"제한 없음\"으로 두면 백그라운드 재생이 안정적입니다</string>
 </resources>

@@ -1,8 +1,12 @@
 package com.jklee.poptube
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.media.AudioManager
+import android.os.Process
+import android.provider.Settings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -48,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private var currentTitle = "YouTube"
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+    private var jsInjectionWarned = false
 
     private val prefs by lazy { getSharedPreferences("poptube", Context.MODE_PRIVATE) }
 
@@ -245,6 +250,8 @@ class MainActivity : AppCompatActivity() {
             if (url != null && (url.contains("/watch") || url.contains("youtu.be/"))) {
                 PlaybackService.update(this@MainActivity, isPlaying, currentTitle)
             }
+            updatePipParams()
+            verifyJsInjection()
         }
     }
 
@@ -300,13 +307,45 @@ class MainActivity : AppCompatActivity() {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
 
+    /**
+     * 안드로이드에는 앱별 PiP 허용 스위치가 따로 있다
+     * (설정 > 앱 > 특별한 접근 > 픽처 인 픽처). 꺼져 있으면 진입이 조용히 실패한다.
+     */
+    private fun pipAllowedByUser(): Boolean {
+        val appOps = getSystemService(AppOpsManager::class.java) ?: return true
+        val mode = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_PICTURE_IN_PICTURE, Process.myUid(), packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_PICTURE_IN_PICTURE, Process.myUid(), packageName
+                )
+            }
+        }.getOrDefault(AppOpsManager.MODE_ALLOWED)
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    /**
+     * JS 브리지가 죽어 있어도 재생 여부를 알아야 한다.
+     * 시스템 오디오가 나오고 있으면 재생 중으로 본다.
+     */
+    private fun isProbablyPlaying(): Boolean {
+        if (isPlaying) return true
+        return runCatching {
+            getSystemService(AudioManager::class.java)?.isMusicActive == true
+        }.getOrDefault(false)
+    }
+
     private fun buildPipParams(): PictureInPictureParams? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
         val builder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
             .setActions(listOf(pipToggleAction()))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            builder.setAutoEnterEnabled(isPlaying)
+            builder.setAutoEnterEnabled(isProbablyPlaying())
             builder.setSeamlessResizeEnabled(true)
         }
         return builder.build()
@@ -328,36 +367,48 @@ class MainActivity : AppCompatActivity() {
         runCatching { buildPipParams()?.let { setPictureInPictureParams(it) } }
     }
 
-    private fun enterPip() {
+    /**
+     * @param silent 자동 진입(홈으로 나가기)에서는 실패해도 토스트를 띄우지 않는다.
+     *               버튼을 눌러 실패했을 때는 반드시 이유를 보여준다 — 조용히 실패하면
+     *               사용자가 원인을 알 방법이 없다.
+     */
+    private fun enterPip(silent: Boolean = false) {
         if (!pipSupported()) {
-            Toast.makeText(this, R.string.pip_unavailable, Toast.LENGTH_SHORT).show()
+            if (!silent) Toast.makeText(this, R.string.pip_unavailable, Toast.LENGTH_LONG).show()
             return
         }
-        runCatching { buildPipParams()?.let { enterPictureInPictureMode(it) } }
+        if (!pipAllowedByUser()) {
+            if (!silent) {
+                Toast.makeText(this, R.string.pip_permission_needed, Toast.LENGTH_LONG).show()
+                runCatching { startActivity(Intent(Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS)) }
+            }
+            return
+        }
+        runCatching {
+            val params = buildPipParams() ?: error("params 생성 실패")
+            if (!enterPictureInPictureMode(params)) error("시스템이 진입을 거부했습니다")
+        }.onFailure { e ->
+            if (!silent) {
+                Toast.makeText(
+                    this, getString(R.string.pip_failed, e.message ?: e::class.java.simpleName),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // 홈으로 나갈 때 재생 중이면 자동으로 떠 있는 창이 된다. (Android 12+ 는 autoEnter 로 처리)
-        if (isPlaying && customView == null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            enterPip()
-        }
+        // Android 12+ 는 autoEnter 로도 들어가지만, 그 플래그가 제때 갱신되지 않았을 수 있으므로
+        // 버전 구분 없이 항상 시도한다. 이미 PiP 라면 아무 일도 일어나지 않는다.
+        if (customView == null && isProbablyPlaying()) enterPip(silent = true)
     }
 
     override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPip, newConfig)
         binding.fabPip.visibility = if (isInPip) View.GONE else View.VISIBLE
-        if (isInPip) {
-            // PiP 창에서는 유튜브 UI를 최대한 걷어내고 영상만 크게 보이도록 시도한다.
-            runJs(
-                """
-                (function(){
-                  var p = document.querySelector('.html5-video-player');
-                  if (p && p.requestFullscreen) { try { p.requestFullscreen(); } catch(e){} }
-                })();
-                """.trimIndent()
-            )
-        }
+        // PiP 창은 작아서 페이지 전체가 축소돼 보이면 쓸모가 없다. 영상만 꽉 채운다.
+        runJs("window.__poptubePip && window.__poptubePip($isInPip)")
     }
 
     // ------------------------------------------------------------- lifecycle
@@ -372,6 +423,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         webView.onResume()
         webView.resumeTimers()
+        // 홈으로 나갈 때 자동 PiP 가 걸리려면 autoEnter 플래그가 미리 켜져 있어야 한다.
+        updatePipParams()
     }
 
     /**
@@ -437,6 +490,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun runJs(js: String) {
         runCatching { webView.evaluateJavascript(js, null) }
+    }
+
+    /**
+     * 주입이 실제로 살아 있는지 스스로 확인한다.
+     * 실패를 조용히 넘기면 광고 스킵도 PiP 최적화도 왜 안 되는지 알 수가 없다.
+     * 세션당 한 번만 알린다.
+     */
+    private fun verifyJsInjection() {
+        if (jsInjectionWarned) return
+        webView.postDelayed({
+            runCatching {
+                webView.evaluateJavascript("typeof window.__poptube") { result ->
+                    if (result == null || result.contains("undefined")) {
+                        jsInjectionWarned = true
+                        Toast.makeText(this, R.string.js_injection_failed, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }, 2500)
     }
 
     private fun isInternal(uri: Uri): Boolean {

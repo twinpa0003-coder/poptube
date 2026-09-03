@@ -57,6 +57,29 @@ object JsInjection {
     return !!(p && /ad-showing|ad-interrupting/.test(p.className));
   }
 
+  /* PiP 창은 아주 작다. 그냥 들어가면 유튜브 페이지 전체가 축소돼 보여서 쓸모가 없다.
+     영상만 창을 꽉 채우도록 CSS 를 덮어씌운다. requestFullscreen 은 사용자 제스처를
+     요구해서 네이티브에서 호출하면 막히기 때문에 CSS 로 처리한다. */
+  window.__poptubePip = function (on) {
+    var id = '__poptube_pip_style';
+    var existing = document.getElementById(id);
+    if (!on) { if (existing) existing.remove(); return; }
+    if (existing) return;
+    var s = document.createElement('style');
+    s.id = id;
+    s.textContent =
+      'html,body{overflow:hidden !important;background:#000 !important}' +
+      '#movie_player,.html5-video-player{' +
+        'position:fixed !important;top:0 !important;left:0 !important;' +
+        'width:100vw !important;height:100vh !important;' +
+        'z-index:2147483647 !important;background:#000 !important}' +
+      '#movie_player video,.html5-video-player video{' +
+        'width:100% !important;height:100% !important;object-fit:contain !important}' +
+      '.ytp-chrome-bottom,.ytp-chrome-top,.ytp-gradient-bottom,.ytp-gradient-top,' +
+      '.ytp-ce-element,.ytp-watermark{display:none !important}';
+    document.documentElement.appendChild(s);
+  };
+
   /* 네이티브(알림 / PiP 버튼)에서 호출하는 조작 함수 */
   window.__poptube = {
     play:   function () { var v = getVideo(); if (v) v.play(); },
