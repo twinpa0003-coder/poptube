@@ -2,6 +2,7 @@ package com.jklee.poptube
 
 import android.content.Context
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.webkit.WebView
 
 /**
@@ -23,8 +24,24 @@ class BackgroundWebView @JvmOverloads constructor(
     /** 재생 유지가 필요 없을 때(예: 앱 종료 중)는 정상 동작으로 돌린다. */
     var keepPlayingInBackground = true
 
+    init {
+        // 이걸 명시하지 않으면 입력란을 탭해도 WebView 가 포커스를 얻지 못해
+        // 소프트 키보드가 뜨지 않는다. 구글 로그인에서 아이디를 입력할 수 없게 된다.
+        isFocusable = true
+        isFocusableInTouchMode = true
+    }
+
     override fun onWindowVisibilityChanged(visibility: Int) {
         if (keepPlayingInBackground && visibility == GONE) return
         super.onWindowVisibilityChanged(visibility)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        // 탭 시점에 포커스를 확실히 가져온다. WebView 의 기본 포커스 처리는
+        // 다른 포커스 가능한 뷰(FAB 등)와 같은 화면에 있을 때 새는 경우가 있다.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && !hasFocus()) {
+            requestFocus()
+        }
+        return super.onTouchEvent(event)
     }
 }
