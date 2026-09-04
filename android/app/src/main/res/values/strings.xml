@@ -15,4 +15,13 @@
     <string name="pip_failed">떠 있는 창 진입에 실패했습니다: %1$s</string>
     <string name="js_injection_failed">스크립트 주입 실패 — 광고 스킵과 떠 있는 창 최적화가 동작하지 않습니다</string>
     <string name="battery_hint">설정 &gt; 배터리에서 PopTube를 \"제한 없음\"으로 두면 백그라운드 재생이 안정적입니다</string>
+    <string name="fab_chat">라이브 채팅</string>
+    <string name="chat_login_required">라이브 채팅을 사용하려면 Google 로그인이 필요합니다.</string>
+    <string name="chat_setup_required">Google Cloud OAuth Client ID 설정이 필요합니다.</string>
+    <string name="chat_no_live_chat">현재 영상에서 라이브 채팅을 찾을 수 없습니다.</string>
+    <string name="oauth_client_id">YOUR_ANDROID_OAUTH_CLIENT_ID.apps.googleusercontent.com</string>
+    <string name="diagnostic_title">PopTube 진단</string>
+    <string name="diagnostic_copied">진단 내용을 복사했습니다</string>
+    <string name="diagnostic_share">진단 내용 보내기</string>
+    <string name="render_process_gone">웹 화면이 중단되어 다시 불러옵니다 (채팅 버튼을 길게 누르면 진단 화면)</string>
 </resources>

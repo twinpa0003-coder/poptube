@@ -74,13 +74,20 @@ cd D:/Project/ytpop/web && npm install && npx vercel --prod
 3. `설정 > 배터리 > 앱별 배터리 사용 > PopTube` → **제한 없음**
    (이걸 빼먹으면 백그라운드 재생이 몇 분 뒤 끊긴다)
 
+### 라이브 채팅 로그인 설정
+
+라이브 채팅은 Google OAuth를 외부 브라우저에서 진행하고 YouTube Live Chat API를 사용한다.
+Android 앱을 빌드하기 전에 Google Cloud에서 YouTube Data API v3를 활성화하고 OAuth Client ID를 만든 뒤
+`android/app/src/main/res/values/strings.xml`의 `oauth_client_id`를 교체해야 한다.
+Google 로그인 화면은 PopTube WebView 안에서 열지 않는다.
+
 ---
 
 ## 4. 동작 확인 체크리스트
 
 - [ ] 앱 실행 시 유튜브 데스크톱 화면이 뜬다
 - [ ] 구글 로그인 후 앱을 껐다 켜도 로그인이 유지된다
-- [ ] 재생 중 홈으로 나가면 떠 있는 창이 되고 다른 앱을 써도 계속 재생된다
+- [ ] 재생 중 우하단 PiP 버튼을 누르면 떠 있는 창이 되고 다른 앱을 써도 계속 재생된다
 - [ ] 화면을 꺼도 10분 이상 소리가 유지된다
 - [ ] 알림창의 재생/일시정지가 동작한다
 - [ ] 영상 앞 광고의 "건너뛰기"가 자동으로 눌린다
@@ -95,7 +102,7 @@ cd D:/Project/ytpop/web && npm install && npx vercel --prod
 | 화면 끄면 소리가 멈춤 | 배터리 최적화 해제 여부. `MainActivity.onPause()`에 `webView.onPause()`가 들어가지 않았는지 |
 | 영상이 아예 재생 안 됨 | 차단 규칙에 `googlevideo.com`이 들어갔는지 (**절대 금지**) |
 | 광고 스킵이 안 됨 | `web/app/api/rules/route.ts`의 `skipSelectors` 갱신 후 재배포 → 앱은 최대 24시간 내 반영 |
-| 구글 로그인 차단 | 우하단 버튼 길게 눌러 모바일 UA로 로그인 후 다시 데스크톱 |
+| 구글 로그인 차단 | WebView 로그인은 지원하지 않음. YouTube 앱에서 영상 링크를 PopTube로 공유 |
 | "광고 차단기 사용 중" 경고 | `blockHosts`/`blockPaths`를 줄여서 재배포 |
 
 ---

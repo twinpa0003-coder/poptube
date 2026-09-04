@@ -9,6 +9,9 @@ class PopTubeApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 액티비티가 뜨기 전에 죽는 경우까지 잡으려면 여기서 가장 먼저 걸어야 한다.
+        DiagnosticLog.installCrashHandler(this)
+        DiagnosticLog.i("app start")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_PLAYBACK,

@@ -55,7 +55,21 @@
                 <data android:scheme="https" android:host="youtu.be" />
                 <data android:scheme="https" android:host="music.youtube.com" />
             </intent-filter>
+
+            <!-- 외부 브라우저 Google OAuth 콜백 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.jklee.poptube" android:host="oauth2redirect" />
+            </intent-filter>
         </activity>
+
+        <!-- 앱 안 진단 화면. 외부에서 열 이유가 없으므로 exported=false. -->
+        <activity
+            android:name=".DiagnosticActivity"
+            android:exported="false"
+            android:label="@string/diagnostic_title" />
 
         <service
             android:name=".PlaybackService"

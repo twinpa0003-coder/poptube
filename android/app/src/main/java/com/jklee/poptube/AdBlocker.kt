@@ -17,8 +17,21 @@ object AdBlocker {
             ByteArrayInputStream(ByteArray(0))
         )
 
+    /**
+     * 차단이 실제로 일어나고 있는지 확인할 방법이 없어 "광고 차단 미검증" 상태가 오래 갔다.
+     * 진단 화면에서 건수를 보여주려고 센다.
+     */
+    @Volatile
+    var blockedCount: Int = 0
+        private set
+
     fun intercept(url: String): WebResourceResponse? =
-        if (shouldBlock(url)) EMPTY_RESPONSE else null
+        if (shouldBlock(url)) {
+            blockedCount++
+            // 초반 몇 건만 남긴다. 전부 남기면 링버퍼가 광고 요청으로 가득 차 정작 볼 것이 밀려난다.
+            if (blockedCount <= 5) DiagnosticLog.i("ad blocked: ${url.take(120)}")
+            EMPTY_RESPONSE
+        } else null
 
     fun shouldBlock(url: String): Boolean {
         val rules = RulesRepository.current

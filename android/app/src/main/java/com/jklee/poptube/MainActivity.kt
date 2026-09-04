@@ -17,19 +17,24 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
-import android.view.KeyEvent
 import android.util.Rational
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -43,7 +48,9 @@ import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.jklee.poptube.databinding.ActivityMainBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -55,9 +62,7 @@ class MainActivity : AppCompatActivity() {
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var jsInjectionWarned = false
-
-    /** PiP 를 위해 우리가 전체화면을 켰는지. PiP 를 나갈 때 되돌리려고 기억해 둔다. */
-    private var fullscreenForPip = false
+    private lateinit var chatAuth: ChatAuth
 
     private val prefs by lazy { getSharedPreferences("poptube", Context.MODE_PRIVATE) }
 
@@ -78,14 +83,27 @@ class MainActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
 
         RulesRepository.loadCached(this)
-        lifecycleScope.launch { RulesRepository.refreshIfStale(this@MainActivity) }
+        lifecycleScope.launch {
+            val oldVersion = RulesRepository.current.version
+            RulesRepository.refreshIfStale(this@MainActivity)
+            if (RulesRepository.current.version != oldVersion) {
+                DiagnosticLog.i("rules refreshed: ${RulesRepository.current.version}")
+                runOnUiThread {
+                    runJs(JsInjection.bootstrap(RulesRepository.current.skipSelectors))
+                }
+            }
+        }
 
         webView = binding.webView
+        chatAuth = ChatAuth(this)
         configureWebView()
         installDocumentStartScript()
 
         binding.fabPip.setOnClickListener { enterPipSmart() }
         binding.fabPip.setOnLongClickListener { toggleDesktopMode(); true }
+        binding.fabChat.setOnClickListener { startChatLogin() }
+        // USB 없이 상태를 확인할 수 있는 유일한 통로 (HANDOFF §7.1).
+        binding.fabChat.setOnLongClickListener { DiagnosticActivity.open(this); true }
 
         registerPipReceiver()
         PlaybackBus.listener = { command ->
@@ -212,7 +230,9 @@ class MainActivity : AppCompatActivity() {
                 WebViewCompat.addDocumentStartJavaScript(
                     webView, script, setOf("https://*.youtube.com", "https://*.youtu.be")
                 )
-            }
+            }.onFailure { DiagnosticLog.w("document-start script install failed", it) }
+        } else {
+            DiagnosticLog.w("document-start script is not supported; using page callbacks")
         }
         // 미지원 기기용 폴백은 onPageStarted / onPageFinished 에서 처리한다.
     }
@@ -257,6 +277,53 @@ class MainActivity : AppCompatActivity() {
             }
             updatePipParams()
             verifyJsInjection()
+            DiagnosticLog.i("page finished: $url")
+        }
+
+        override fun onReceivedError(
+            view: WebView?,
+            request: WebResourceRequest?,
+            error: WebResourceError?
+        ) {
+            // 메인 프레임 실패만 본다. 서브리소스 실패는 광고 차단으로도 흔히 발생해 노이즈가 된다.
+            val req = request ?: return
+            if (!req.isForMainFrame) return
+            DiagnosticLog.w("main frame load error: ${req.url} -> ${error?.errorCode} ${error?.description}")
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView?,
+            request: WebResourceRequest?,
+            errorResponse: WebResourceResponse?
+        ) {
+            val req = request ?: return
+            if (!req.isForMainFrame) return
+            DiagnosticLog.w("main frame HTTP ${errorResponse?.statusCode}: ${req.url}")
+        }
+
+        /**
+         * 렌더러가 죽으면 WebView 는 빈 화면이 되고 앱 프로세스는 살아 있다.
+         * 사용자에게 "전혀 작동 안 함" 으로 보이는 대표적인 경우인데 지금까지 아무 기록도 남지 않았다.
+         * true 를 돌려주지 않으면 앱까지 함께 죽는다.
+         *
+         * 죽은 WebView 인스턴스는 다시 쓸 수 없어 액티비티를 새로 만든다.
+         * 다만 크래시가 반복되면 무한 재생성이 되므로 횟수를 제한한다.
+         */
+        override fun onRenderProcessGone(
+            view: WebView?,
+            detail: RenderProcessGoneDetail?
+        ): Boolean {
+            val crashed = detail?.didCrash() == true
+            DiagnosticLog.w("render process gone (crashed=$crashed) — 화면이 비면 이것이 원인이다")
+            Toast.makeText(this@MainActivity, R.string.render_process_gone, Toast.LENGTH_LONG).show()
+            if (renderGoneRecoveries < MAX_RENDER_GONE_RECOVERIES) {
+                renderGoneRecoveries++
+                DiagnosticLog.i("recreating activity after render process gone ($renderGoneRecoveries)")
+                recreate()
+            } else {
+                DiagnosticLog.w("render process gone repeated; giving up auto-recovery")
+            }
+            return true
         }
     }
 
@@ -379,10 +446,12 @@ class MainActivity : AppCompatActivity() {
      */
     private fun enterPip(silent: Boolean = false) {
         if (!pipSupported()) {
+            DiagnosticLog.w("PiP unsupported")
             if (!silent) Toast.makeText(this, R.string.pip_unavailable, Toast.LENGTH_LONG).show()
             return
         }
         if (!pipAllowedByUser()) {
+            DiagnosticLog.w("PiP permission denied by app-op")
             if (!silent) {
                 Toast.makeText(this, R.string.pip_permission_needed, Toast.LENGTH_LONG).show()
                 openPipSettings()
@@ -391,8 +460,10 @@ class MainActivity : AppCompatActivity() {
         }
         runCatching {
             val params = buildPipParams() ?: error("params 생성 실패")
+            DiagnosticLog.i("enter PiP requested: playing=${isProbablyPlaying()}, customView=${customView != null}")
             if (!enterPictureInPictureMode(params)) error("시스템이 진입을 거부했습니다")
         }.onFailure { e ->
+            DiagnosticLog.w("enter PiP failed", e)
             if (!silent) {
                 Toast.makeText(
                     this, getString(R.string.pip_failed, e.message ?: e::class.java.simpleName),
@@ -422,12 +493,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Android 12+ 는 autoEnter 로도 들어가지만, 그 플래그가 제때 갱신되지 않았을 수 있으므로
-        // 버전 구분 없이 항상 시도한다. 이미 PiP 라면 아무 일도 일어나지 않는다.
-        //
-        // 전체화면 상태(customView != null)를 제외하면 안 된다. 오히려 그때가 PiP 화질이
-        // 가장 좋다 — 영상 뷰가 창을 그대로 채운다.
-        if (isProbablyPlaying()) enterPip(silent = true)
+        // 자동 진입은 외부 링크를 열거나 다른 화면으로 이동할 때도 발동할 수 있다.
+        // PiP는 FAB를 누른 경우에만 진입시켜 테스트 결과와 사용자 의도를 일치시킨다.
+        DiagnosticLog.i("user left activity; automatic PiP disabled")
     }
 
     override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
@@ -438,52 +506,18 @@ class MainActivity : AppCompatActivity() {
         // WebView 가 축소하지 않고 왼쪽 위만 잘라서 보여준다.
         // PiP 동안에는 wide viewport 를 꺼서 레이아웃 폭을 창 크기에 맞춘다.
         webView.settings.useWideViewPort = !isInPip
-        runJs("window.__poptubePip && window.__poptubePip($isInPip)")
-
-        if (!isInPip && fullscreenForPip) {
-            // PiP 때문에 우리가 켠 전체화면이면 되돌린다.
-            fullscreenForPip = false
-            if (customView != null) webChrome.onHideCustomView()
+        webView.post {
+            webView.requestLayout()
+            runJs("window.__poptubePip && window.__poptubePip($isInPip)")
+            DiagnosticLog.i("PiP mode changed: inPip=$isInPip, webView=${webView.width}x${webView.height}")
         }
+
     }
 
-    /**
-     * PiP 로 들어가기 전에 플레이어를 전체화면으로 만든다.
-     *
-     * 전체화면이면 [WebChromeClient.onShowCustomView] 로 영상 뷰가 액티비티를 꽉 채우고,
-     * 그 상태로 PiP 에 들어가면 창 크기에 맞게 정확히 렌더링된다. 페이지를 축소해서
-     * 보여주는 것과는 결과물이 완전히 다르다.
-     *
-     * JS 의 requestFullscreen 은 사용자 제스처를 요구해서 네이티브에서 호출하면 막힌다.
-     * 대신 유튜브 플레이어의 단축키 'f' 를 실제 키 이벤트로 보낸다. 키 이벤트는 정상적인
-     * 입력 경로를 타므로 Chromium 이 사용자 조작으로 인정한다.
-     */
-    private fun requestPageFullscreen() {
-        runJs(
-            """
-            (function(){
-              var p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
-              if (p) { try { p.focus(); } catch(e) {} }
-            })();
-            """.trimIndent()
-        )
-        val now = SystemClock.uptimeMillis()
-        runCatching {
-            webView.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F, 0))
-            webView.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F, 0))
-        }
-    }
-
-    /** 전체화면을 먼저 시도한 뒤 PiP 로 들어간다. 실패해도 CSS 폴백으로 진입은 한다. */
+    /** 수동 요청만 PiP로 보낸다. 진입 후 WebView 크기에 맞춰 플레이어 CSS를 적용한다. */
     private fun enterPipSmart() {
-        val onWatchPage = webView.url?.let { it.contains("/watch") || it.contains("youtu.be/") } == true
-        if (customView == null && onWatchPage) {
-            fullscreenForPip = true
-            requestPageFullscreen()
-            webView.postDelayed({ enterPip() }, 600)
-        } else {
-            enterPip()
-        }
+        DiagnosticLog.i("manual PiP button: url=${webView.url}, playing=${isProbablyPlaying()}")
+        enterPip()
     }
 
     // ------------------------------------------------------------- lifecycle
@@ -491,7 +525,67 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.data?.scheme == "com.jklee.poptube") {
+            chatAuth.handleResponse(intent) { ok ->
+                runOnUiThread {
+                    Toast.makeText(this, if (ok) "채팅 로그인 완료" else "채팅 로그인 실패", Toast.LENGTH_LONG).show()
+                    if (ok) openChatPanel()
+                }
+            }
+        }
         resolveStartUrl(intent).let { if (it != DEFAULT_URL) webView.loadUrl(it) }
+    }
+
+    private fun startChatLogin() {
+        val clientId = getString(R.string.oauth_client_id)
+        chatAuth.withFreshToken(clientId) { token ->
+            if (token != null) { runOnUiThread { openChatPanel() }; return@withFreshToken }
+            if (!chatAuth.start(this, clientId)) {
+                Toast.makeText(this, R.string.chat_setup_required, Toast.LENGTH_LONG).show()
+                DiagnosticLog.w("chat OAuth not configured")
+            }
+        }
+    }
+
+    private fun openChatPanel() {
+        val videoId = currentVideoId() ?: run {
+            Toast.makeText(this, R.string.chat_no_live_chat, Toast.LENGTH_LONG).show(); return
+        }
+        val clientId = getString(R.string.oauth_client_id)
+        val lines = TextView(this).apply { setPadding(24, 16, 24, 16); text = "채팅을 불러오는 중…" }
+        val input = EditText(this).apply { hint = "메시지 입력"; maxLines = 2 }
+        val send = Button(this).apply { text = "보내기"; isEnabled = false }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(ScrollView(this@MainActivity).apply { addView(lines) }, LinearLayout.LayoutParams(-1, 0, 1f)); addView(input); addView(send) }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setTitle("라이브 채팅").setView(box).setNegativeButton("닫기", null).create()
+        val api = LiveChatApi()
+        lifecycleScope.launch {
+            chatAuth.withFreshToken(clientId) { token ->
+                if (token == null) return@withFreshToken
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val chatId = api.liveChatId(videoId, token)
+                    val fetched = chatId?.let { api.list(it, token) }.orEmpty()
+                    withContext(Dispatchers.Main) {
+                        if (chatId == null) { lines.text = getString(R.string.chat_no_live_chat); return@withContext }
+                        lines.text = fetched.joinToString("\n") { "${it.author}: ${it.text}" }.ifBlank { "아직 채팅이 없습니다." }
+                        send.isEnabled = true
+                        send.setOnClickListener {
+                            val message = input.text.toString().trim(); if (message.isEmpty()) return@setOnClickListener
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                val ok = api.send(chatId, message, token)
+                                withContext(Dispatchers.Main) { if (ok) { input.text.clear(); lines.append("\n나: $message") } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun currentVideoId(): String? {
+        val uri = runCatching { Uri.parse(webView.url ?: return null) }.getOrNull() ?: return null
+        return if (uri.host?.endsWith("youtu.be") == true) uri.pathSegments.firstOrNull()
+        else uri.getQueryParameter("v")
     }
 
     override fun onResume() {
@@ -512,6 +606,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        chatAuth.close()
         PlaybackBus.listener = null
         runCatching { unregisterReceiver(pipReceiver) }
         PlaybackService.stop(this)
@@ -573,11 +668,13 @@ class MainActivity : AppCompatActivity() {
      * 세션당 한 번만 알린다.
      */
     private fun verifyJsInjection() {
-        if (jsInjectionWarned) return
         webView.postDelayed({
             runCatching {
                 webView.evaluateJavascript("typeof window.__poptube") { result ->
-                    if (result == null || result.contains("undefined")) {
+                    val alive = result != null && !result.contains("undefined")
+                    // 성공도 남긴다. 실패만 기록하면 "주입이 됐는지" 자체가 계속 미확인으로 남는다.
+                    DiagnosticLog.i("js injection: ${if (alive) "OK" else "FAILED"} (typeof=$result)")
+                    if (!alive && !jsInjectionWarned) {
                         jsInjectionWarned = true
                         Toast.makeText(this, R.string.js_injection_failed, Toast.LENGTH_LONG).show()
                     }
@@ -608,6 +705,11 @@ class MainActivity : AppCompatActivity() {
         private const val DEFAULT_URL = "https://www.youtube.com"
         private const val KEY_DESKTOP = "desktop_mode"
         private const val ACTION_PIP_TOGGLE = "com.jklee.poptube.PIP_TOGGLE"
+
+        private const val MAX_RENDER_GONE_RECOVERIES = 2
+
+        /** recreate() 는 액티비티를 새로 만들므로 인스턴스 필드로는 셀 수 없다. 프로세스 범위로 둔다. */
+        private var renderGoneRecoveries = 0
 
         private const val CHROME_MAJOR = "125"
 

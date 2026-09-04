@@ -29,8 +29,8 @@ android {
         applicationId = "com.jklee.poptube"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.1.0"
+        versionCode = 7
+        versionName = "1.2.0"
 
         // 앱이 원격 광고차단 규칙을 받아오는 곳. Vercel 배포 후 자기 도메인으로 바꾸면 된다.
         buildConfigField("String", "RULES_URL", "\"https://poptube.vercel.app/api/rules\"")
@@ -67,4 +67,5 @@ dependencies {
     implementation("androidx.media:media:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("net.openid:appauth:0.11.1")
 }

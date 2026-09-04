@@ -20,6 +20,19 @@
         android:visibility="gone" />
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabChat"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="88dp"
+        android:alpha="0.75"
+        android:contentDescription="@string/fab_chat"
+        android:src="@drawable/ic_chat"
+        app:fabSize="mini"
+        app:tint="@android:color/white" />
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabPip"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
