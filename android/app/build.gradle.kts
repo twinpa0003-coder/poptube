@@ -34,6 +34,11 @@ android {
 
         // 앱이 원격 광고차단 규칙을 받아오는 곳. Vercel 배포 후 자기 도메인으로 바꾸면 된다.
         buildConfigField("String", "RULES_URL", "\"https://poptube.vercel.app/api/rules\"")
+
+        // net.openid:appauth 의 매니페스트가 요구하는 플레이스홀더.
+        // 넣지 않으면 manifest merger 가 "requires a placeholder substitution" 으로 빌드를 막는다.
+        // AndroidManifest 의 OAuth 콜백 intent-filter(scheme=com.jklee.poptube)와 반드시 같아야 한다.
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.jklee.poptube"
     }
 
     buildTypes {
