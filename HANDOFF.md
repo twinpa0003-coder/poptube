@@ -1,7 +1,7 @@
 # PopTube 인수인계 문서
 
 > 다른 AI/개발자가 이 프로젝트를 이어받기 위한 문서다.
-> 작성 시점: 2026-09-03 / 마지막 빌드: v1.1.0 (versionCode 6, 커밋 `76ce3ca`)
+> 작성 시점: 2026-09-03 / 갱신: 2026-09-04 / 마지막 빌드: v1.2.0 (versionCode 7)
 >
 > **읽는 순서: §1 목표 → §3 현재 상태 → §6 이미 밟은 함정 → §7 다음 할 일**
 > §6 을 건너뛰면 이미 해결된 문제를 처음부터 다시 겪게 된다.
@@ -48,8 +48,9 @@
 | 소프트 키보드 입력 | ✅ 동작 | §6.5 |
 | **떠 있는 창 (PiP)** | ❌ **실패** | 3번 시도, §4 |
 | 구글 로그인 | ❌ **차단됨** | §5 |
-| 광고 차단 | ❓ 미검증 | JS 주입 동작 여부 자체가 미확인 |
-| JS 주입 (`JsInjection.kt`) | ❓ **미확인** | §4.2 — 이걸 먼저 밝혀야 한다 |
+| 광고 차단 | ❓ 미검증 | 차단 건수가 진단 화면에 뜬다 (v1.2.0) |
+| JS 주입 (`JsInjection.kt`) | ❓ 미확인 | 성공·실패가 진단 화면에 기록된다 (v1.2.0) |
+| **앱 내 진단 화면** | ✅ **추가됨** | v1.2.0, §7.1 해소 — 채팅 FAB 롱프레스 |
 | Vercel 배포 | ⏸ 미실행 | 코드는 완성, 배포만 안 함 |
 
 ### 마지막 상황 (중요)
@@ -58,7 +59,10 @@ v1.1.0 설치 후 사용자가 **"다시 깔았는데 전혀 작동 안 하는�
 그 "전혀 작동 안 함"이 구체적으로 무엇인지(앱 실행 불가 / PiP 버튼 무반응 / 영상 재생 불가)
 **확인되지 않은 채 중단되었다.**
 
-**→ 첫 번째 할 일은 코드 수정이 아니라 이 증상을 특정하는 것이다.**
+**→ 첫 번째 할 일은 여전히 이 증상을 특정하는 것이다. 다만 이제 수단이 있다.**
+v1.2.0 을 깔고 **채팅 FAB 를 길게 눌러** 진단 화면을 연 뒤 "복사" 로 내용을 넘기면 된다(§7.1).
+가장 먼저 볼 것: 스냅샷의 **WebView 버전**·**배터리 최적화 제외 여부**, 로그의
+`js injection: OK/FAILED`, `render process gone`, `main frame load error`, 그리고 마지막 크래시.
 
 ---
 
@@ -215,26 +219,57 @@ JS 로 `document.hidden` 을 속이는 것만으로는 **절대 안 된다.**
 컴파일 에러가 난다. 문자열 `"android.settings.PICTURE_IN_PICTURE_SETTINGS"` 를 쓰고
 `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` 로 폴백한다.
 
+### 6.9 `net.openid:appauth` 은 매니페스트 플레이스홀더를 요구한다
+
+라이브러리의 `RedirectUriReceiverActivity` 가 `${appAuthRedirectScheme}` 치환을 요구한다.
+값을 주지 않으면 **manifest merger 단계에서 빌드가 죽는다** (컴파일은 멀쩡히 통과한 뒤라 헷갈린다).
+
+```
+Attribute data@scheme requires a placeholder substitution
+but no value for <appAuthRedirectScheme> is provided.
+```
+
+`app/build.gradle.kts` 의 `defaultConfig` 에:
+```kotlin
+manifestPlaceholders["appAuthRedirectScheme"] = "com.jklee.poptube"
+```
+`AndroidManifest.xml` 의 OAuth 콜백 intent-filter 스킴과 반드시 같아야 한다.
+
+> 커밋 `e135f43`(appauth 도입)이 푸시된 적이 없어 CI 를 한 번도 안 탔고,
+> 그래서 이 실패가 v1.2.0 을 올릴 때에야 드러났다.
+> **로컬에 JDK/Android SDK 가 없으므로 커밋은 반드시 푸시해서 CI 로 검증할 것.**
+
 ---
 
 ## 7. 다음 할 일 (권장 순서)
 
-### 7.1 【최우선】 눈으로 볼 수 있는 진단 수단 확보
+### 7.1 ✅ 완료 — 앱 내 진단 화면 (v1.2.0)
 
-**이 프로젝트가 실패한 근본 원인은 실기기 로그를 한 번도 못 봤다는 것이다.**
+이 프로젝트가 실패한 근본 원인은 실기기 로그를 한 번도 못 봤다는 것이었다.
 증상 보고 → 추측 수정 → 빌드 4분 → 재설치 → 다시 실패의 사이클을 6번 반복했다.
-코드를 더 고치기 전에 이걸 먼저 깨야 한다.
 
-선택지:
-1. **`adb logcat`** — `platform-tools` 만 받으면 된다(JDK 불필요).
-   폰에서 개발자 옵션 > USB 디버깅 켜고 USB 연결. 가장 확실하다.
-2. **앱 내 디버그 화면** — 로그를 앱 안에 쌓아 보여주는 화면을 추가하고, FAB 를 두 번
-   길게 누르면 열리게 한다. USB 없이 사용자가 스크린샷을 찍어 보낼 수 있다.
-   PiP 진입 시도 결과, JS 주입 여부, 재생 상태, 권한 상태를 전부 기록할 것.
-3. **`Chrome DevTools` 원격 디버깅** — `WebView.setWebContentsDebuggingEnabled(true)` 는
-   이미 켜져 있다. USB + PC 크롬 `chrome://inspect` 로 WebView 내부를 직접 볼 수 있다.
+**해결: 채팅 FAB 를 길게 누르면 진단 화면이 열린다.**
+(PiP FAB 롱프레스는 데스크톱 모드 토글이 이미 쓰고 있어 채팅 FAB 에 붙였다)
 
-**2번(앱 내 디버그 화면)을 먼저 넣는 것을 강력히 권한다.** 사용자가 USB 없이 보고할 수 있다.
+- `DiagnosticLog` — logcat 과 함께 메모리 링버퍼(300줄)에 시각과 함께 쌓는다.
+  `i()`/`w()` 시그니처를 유지해 기존 호출부는 그대로다.
+- `DiagnosticActivity` — 상태 스냅샷 + 마지막 크래시 + 로그. **복사 / 공유** 버튼이 있어
+  스크린샷을 찍지 않고 텍스트로 그대로 넘길 수 있다.
+- 스냅샷 항목: 앱·기기·안드로이드 버전, **WebView 패키지 버전**, PiP 지원·권한,
+  알림 권한, **배터리 최적화 제외 여부**, 광고 차단 건수, 규칙 버전.
+- 크래시 기록 — 액티비티가 뜨기 전에 죽어도 `PopTubeApp` 에서 건 전역 핸들러가
+  디스크에 남기고 다음 실행 때 진단 화면 맨 위에 보여준다.
+
+함께 메운 계측 구멍:
+- **`onRenderProcessGone`** — 렌더러가 죽으면 빈 화면만 남고 아무 기록이 없었다.
+  "전혀 작동 안 함" 의 유력 후보다. 이제 기록 + 안내 + 액티비티 재생성(프로세스당 2회)을 한다.
+- `onReceivedError` / `onReceivedHttpError` — 메인 프레임 실패만 기록(서브리소스는 광고차단 노이즈)
+- `verifyJsInjection` — 실패만 알리던 것을 성공도 기록하게 바꿔 §4.2 의 "미확인" 을 없앴다.
+
+남은 진단 수단(필요해지면):
+- **`adb logcat`** — `platform-tools` 만 받으면 된다(JDK 불필요). 가장 확실하다.
+- **`Chrome DevTools` 원격 디버깅** — `setWebContentsDebuggingEnabled(true)` 는 이미 켜져 있다.
+  USB + PC 크롬 `chrome://inspect`.
 
 ### 7.2 "전혀 작동 안 함" 의 정체 파악
 

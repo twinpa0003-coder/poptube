@@ -34,8 +34,14 @@ class ChatAuth(private val context: Context) {
     }
 
     fun handleResponse(intent: Intent?, onDone: (Boolean) -> Unit) {
-        val response = AuthorizationResponse.fromIntent(intent)
-        val error = AuthorizationException.fromIntent(intent)
+        // AppAuth 의 fromIntent 는 @NonNull Intent 를 받는다. null 을 그대로 넘기면 컴파일되지 않는다.
+        val data = intent ?: run {
+            DiagnosticLog.w("chat OAuth response has no intent")
+            onDone(false)
+            return
+        }
+        val response = AuthorizationResponse.fromIntent(data)
+        val error = AuthorizationException.fromIntent(data)
         if (response == null || error != null) {
             DiagnosticLog.w("chat OAuth response failed", error)
             onDone(false)
@@ -51,11 +57,15 @@ class ChatAuth(private val context: Context) {
     }
 
     fun withFreshToken(clientId: String, callback: (String?) -> Unit) {
+        if (clientId.isBlank() || clientId.contains("YOUR_")) { callback(null); return }
         val json = prefs.getString(KEY_STATE, null)
         val state = runCatching { json?.let { AuthState.jsonDeserialize(it) } }.getOrNull()
         if (state == null) { callback(null); return }
         val authService = service ?: AuthorizationService(context).also { service = it }
-        state.performActionWithFreshTokens(authService, clientId) { token, _, ex ->
+        // performActionWithFreshTokens 의 2번째 인자는 ClientAuthentication 또는 Map 이다.
+        // clientId(String) 를 넘기면 맞는 오버로드가 없어 컴파일되지 않는다.
+        // Google 설치형 앱은 PKCE 라 클라이언트 인증이 없고, client id 는 이미 AuthState 안에 있다.
+        state.performActionWithFreshTokens(authService) { token, _, ex ->
             if (ex == null && !token.isNullOrBlank()) {
                 prefs.edit().putString(KEY_STATE, state.jsonSerializeString()).apply()
                 callback(token)
